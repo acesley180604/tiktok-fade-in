@@ -112,7 +112,7 @@ Return ONLY the hooks, one per line, no numbering or extra text."""
                 "Content-Type": "application/json"
             },
             json={
-                "model": "meta-llama/llama-3.1-8b-instruct:free",
+                "model": "x-ai/grok-4.1-fast:free",
                 "messages": [{"role": "user", "content": prompt}]
             },
             timeout=30
@@ -319,6 +319,7 @@ RULES:
 Return ONLY the hook text (max 50 chars), nothing else."""
 
     try:
+        print(f"Calling OpenRouter API to rephrase: {comment_text[:50]}...")
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -326,15 +327,22 @@ Return ONLY the hook text (max 50 chars), nothing else."""
                 "Content-Type": "application/json"
             },
             json={
-                "model": "meta-llama/llama-3.1-8b-instruct:free",
+                "model": "x-ai/grok-4.1-fast:free",
                 "messages": [{"role": "user", "content": prompt}]
             },
             timeout=30
         )
+        print(f"OpenRouter response status: {response.status_code}")
+        if response.status_code != 200:
+            print(f"OpenRouter error response: {response.text}")
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        result = response.json()["choices"][0]["message"]["content"].strip()
+        print(f"Rephrased hook: {result}")
+        return result
     except Exception as e:
         print(f"Rephrase Error: {e}")
+        import traceback
+        traceback.print_exc()
         return comment_text
 
 

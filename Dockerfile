@@ -23,8 +23,8 @@ COPY . .
 # Create temp directory for uploads
 RUN mkdir -p /tmp/uploads
 
-# Expose port
+# Expose port (Railway sets PORT env var)
 EXPOSE 8080
 
-# Run with gunicorn for production
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "120", "--workers", "2", "app:app"]
+# Run with gunicorn for production - use shell form to expand $PORT
+CMD gunicorn --bind 0.0.0.0:${PORT:-8080} --timeout 120 --workers 2 app:app

@@ -975,8 +975,24 @@ HTML_TEMPLATE = """
             animation: spin 0.8s linear infinite;
         }
 
+        .btn-spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 6px;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        .btn.loading {
+            pointer-events: none;
+            opacity: 0.8;
         }
 
         .reddit-loading, .reddit-error {
@@ -1353,11 +1369,16 @@ HTML_TEMPLATE = """
             div.querySelector('.rephrase-btn').addEventListener('click', async () => {
                 const hookInput = div.querySelector('.reddit-hook-input');
                 const comment = hookInput.value;
-                if (!comment) return;
+                if (!comment) {
+                    alert('Please select a comment or enter text first');
+                    return;
+                }
 
                 const btn = div.querySelector('.rephrase-btn');
+                const originalText = btn.textContent;
                 btn.disabled = true;
-                btn.textContent = 'Rephrasing...';
+                btn.classList.add('loading');
+                btn.innerHTML = '<span class="btn-spinner"></span>Rephrasing...';
 
                 try {
                     const response = await fetch('/reddit/rephrase', {
@@ -1368,13 +1389,23 @@ HTML_TEMPLATE = """
                     const data = await response.json();
                     if (data.hook) {
                         hookInput.value = data.hook;
+                        btn.innerHTML = '✓ Done!';
+                        setTimeout(() => {
+                            btn.innerHTML = originalText;
+                        }, 1500);
+                    } else {
+                        btn.innerHTML = originalText;
                     }
                 } catch (err) {
                     console.error(err);
+                    btn.innerHTML = 'Error - Try again';
+                    setTimeout(() => {
+                        btn.innerHTML = originalText;
+                    }, 2000);
                 }
 
                 btn.disabled = false;
-                btn.textContent = 'Rephrase with AI';
+                btn.classList.remove('loading');
             });
 
             // Generate video button
@@ -1388,9 +1419,11 @@ HTML_TEMPLATE = """
 
                 const btn = div.querySelector('.generate-btn');
                 const imageUrl = btn.dataset.imageUrl;
+                const originalText = btn.textContent;
 
                 btn.disabled = true;
-                btn.textContent = 'Generating...';
+                btn.classList.add('loading');
+                btn.innerHTML = '<span class="btn-spinner"></span>Generating...';
 
                 try {
                     const response = await fetch('/reddit/create-video', {
@@ -1410,16 +1443,18 @@ HTML_TEMPLATE = """
                     a.download = `hook_${post.id}.mp4`;
                     a.click();
 
-                    btn.textContent = 'Downloaded!';
+                    btn.innerHTML = '✓ Downloaded!';
+                    btn.classList.remove('loading');
                     setTimeout(() => {
-                        btn.textContent = 'Generate Video';
+                        btn.innerHTML = originalText;
                         btn.disabled = false;
                     }, 2000);
                 } catch (err) {
                     console.error(err);
-                    btn.textContent = 'Error';
+                    btn.innerHTML = 'Error - Try again';
+                    btn.classList.remove('loading');
                     setTimeout(() => {
-                        btn.textContent = 'Generate Video';
+                        btn.innerHTML = originalText;
                         btn.disabled = false;
                     }, 2000);
                 }

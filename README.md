@@ -1,50 +1,74 @@
-# TikTok Fade-In Hook Video Generator
+# TikTok Hook Video Generator
 
-Create TikTok-style hook videos with sprite animations and fade-in effects.
+Web app to create TikTok-style hook videos with AI-generated text.
 
 ## Features
 
-- 9:16 vertical format (1080x1920) optimized for TikTok/Reels
-- Full-width text overlay at top (TikTok native style)
-- Sprite animation with customizable fade-in timing
-- TikTok Sans font support
+- 🎬 **9:16 vertical format** (1080x1920) optimized for TikTok/Reels
+- 🤖 **AI-powered hook generation** using OpenRouter (Llama 3.2 Vision)
+- ✨ **Full-width text overlay** at top with TikTok Sans font
+- 🌅 **2s black screen + 3s fade-in** effect
+- 📤 **Upload any image** and get instant video output
 
 ## Video Structure
 
 | Time | Effect |
 |------|--------|
-| 0-2s | Black screen + text overlay at top |
-| 2-5s | Sprite fades in at center (3-second fade) |
-
-## Requirements
-
-- Python 3.10+
-- Pillow
-- MoviePy
-- TikTok Sans font (place in `~/Downloads/TikTok_Sans/`)
+| 0-2s | Black screen + hook text at top (full-width white box) |
+| 2-5s | Image fades in at center (full width, 3-second fade) |
 
 ## Installation
 
+1. Clone the repo:
 ```bash
-pip install pillow moviepy
+git clone https://github.com/acesley180604/tiktok-fade-in.git
+cd tiktok-fade-in
 ```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. (Optional) Set up OpenRouter API for AI hooks:
+```bash
+cp .env.example .env
+# Edit .env and add your OPENROUTER_API_KEY
+```
+
+4. Download TikTok Sans font and place in `~/Downloads/TikTok_Sans/`
 
 ## Usage
 
-```bash
-python tiktok_ad_builder.py <sprite_sheet.png> [output.mp4]
-```
-
-### Example
+### Start the Web App
 
 ```bash
-python tiktok_ad_builder.py ~/sprites/cat.png ~/Downloads/hook_video.mp4
+python app.py
 ```
 
-## Customization
+Then open http://localhost:5000 in your browser.
 
-Edit `tiktok_ad_builder.py` to customize:
-- `hook_text` - The text displayed at the top
-- `black_duration` - How long before sprite appears (default: 2s)
-- `fade_duration` - How long the fade-in takes (default: 3s)
-- `sprite_scale` - Size of the sprite (default: 14x)
+### How it works
+
+1. **Upload an image** (meme, screenshot, photo)
+2. **AI analyzes the image** and generates 5 hook options
+3. **Select a hook** or write your own
+4. **Click Generate** → Download your TikTok-ready video!
+
+## OpenRouter Setup (Optional)
+
+For AI-powered hook generation:
+
+1. Get API key from https://openrouter.ai/keys
+2. Set environment variable:
+```bash
+export OPENROUTER_API_KEY=your_key_here
+```
+
+Without an API key, the app will use fallback generic hooks.
+
+## CLI Usage (Legacy)
+
+```bash
+python image_hook_builder.py <image.jpg> "Your hook text" [output.mp4]
+```

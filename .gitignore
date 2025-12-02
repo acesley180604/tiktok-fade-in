@@ -10,6 +10,10 @@ ENV/
 
 # Output videos
 *.mp4
+output/
+
+# Environment variables
+.env
 
 # IDE
 .idea/
@@ -19,3 +23,7 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# UV
+uv.lock
+.python-version

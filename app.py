@@ -22,8 +22,20 @@ app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
 # OpenRouter Configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
-# TikTok Sans font
-TIKTOK_FONT_BOLD = os.path.expanduser("~/Downloads/TikTok_Sans/static/TikTokSans-Bold.ttf")
+# TikTok Sans font - try multiple paths for local and production
+FONT_PATHS = [
+    os.path.expanduser("~/Downloads/TikTok_Sans/static/TikTokSans-Bold.ttf"),  # Local macOS
+    "/app/fonts/TikTokSans-Bold.ttf",  # Docker with bundled font
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Fallback on Linux
+]
+
+def find_font():
+    for path in FONT_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
+
+TIKTOK_FONT_BOLD = find_font()
 
 # Video dimensions (9:16 TikTok)
 VIDEO_WIDTH = 1080
@@ -37,10 +49,13 @@ def allowed_file(filename):
 
 
 def get_font(size):
-    try:
-        return ImageFont.truetype(TIKTOK_FONT_BOLD, size)
-    except:
-        return ImageFont.load_default()
+    if TIKTOK_FONT_BOLD:
+        try:
+            return ImageFont.truetype(TIKTOK_FONT_BOLD, size)
+        except Exception:
+            pass
+    # Fallback to default font
+    return ImageFont.load_default()
 
 
 def wrap_text(text, font, max_width):
@@ -221,267 +236,520 @@ def create_video(image_path, hook_text, output_path, duration=5, fps=24):
         codec="libx264",
         fps=fps,
         preset="medium",
-        bitrate="8000k",
-        verbose=False,
-        logger=None
+        bitrate="8000k"
     )
 
     return output_path
 
 
-# HTML Template
+# HTML Template - Multi-file upload with batch processing
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok Hook Video Generator</title>
+    <title>Hook Video Generator</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #09090b;
+            --surface: #18181b;
+            --surface-2: #27272a;
+            --border: #27272a;
+            --border-hover: #3f3f46;
+            --text: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            --success: #22c55e;
+            --error: #ef4444;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
-            padding: 20px;
         }
-        .container {
-            max-width: 800px;
+
+        .app {
+            max-width: 720px;
             margin: 0 auto;
+            padding: 24px 16px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
-        h1 {
-            text-align: center;
-            margin-bottom: 30px;
-            font-size: 2rem;
+
+        /* Header */
+        .header {
+            padding: 16px 0 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
+
+        .header-left h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+        }
+
+        .header-left p {
+            color: var(--text-muted);
+            font-size: 0.8125rem;
+            margin-top: 2px;
+        }
+
+        .header-right {
+            display: flex;
+            gap: 8px;
+        }
+
+        /* Upload section */
         .upload-area {
-            border: 2px dashed #333;
+            border: 1px dashed var(--border);
             border-radius: 12px;
-            padding: 40px;
+            padding: 32px 20px;
             text-align: center;
             cursor: pointer;
-            transition: border-color 0.3s;
+            transition: all 0.2s ease;
+            background: var(--surface);
             margin-bottom: 20px;
         }
-        .upload-area:hover { border-color: #fe2c55; }
-        .upload-area.dragover { border-color: #fe2c55; background: rgba(254, 44, 85, 0.1); }
-        #preview {
-            max-width: 100%;
-            max-height: 300px;
-            border-radius: 8px;
-            display: none;
-            margin: 20px auto;
+
+        .upload-area:hover {
+            border-color: var(--border-hover);
+            background: var(--surface-2);
         }
-        .hooks-container {
-            margin: 20px 0;
-            display: none;
+
+        .upload-area.dragover {
+            border-color: var(--text);
+            border-style: solid;
         }
-        .hook-option {
-            background: #1a1a1a;
-            border: 2px solid #333;
-            border-radius: 8px;
-            padding: 15px;
-            margin: 10px 0;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        .hook-option:hover { border-color: #fe2c55; }
-        .hook-option.selected { border-color: #fe2c55; background: rgba(254, 44, 85, 0.1); }
-        .custom-hook {
-            width: 100%;
-            background: #1a1a1a;
-            border: 2px solid #333;
-            border-radius: 8px;
-            padding: 15px;
-            color: #fff;
-            font-size: 16px;
-            resize: vertical;
-            min-height: 80px;
-            margin: 10px 0;
-        }
-        .custom-hook:focus { outline: none; border-color: #fe2c55; }
-        .btn {
-            background: #fe2c55;
-            color: #fff;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            width: 100%;
-            margin: 10px 0;
-            transition: opacity 0.3s;
-        }
-        .btn:hover { opacity: 0.9; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-secondary {
-            background: #333;
-        }
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 20px;
-        }
-        .spinner {
-            border: 3px solid #333;
-            border-top: 3px solid #fe2c55;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
+
+        .upload-area .icon {
+            width: 36px;
+            height: 36px;
             margin: 0 auto 10px;
+            opacity: 0.5;
         }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .result { display: none; text-align: center; margin-top: 20px; }
-        .result video {
-            max-width: 300px;
+
+        .upload-area h3 {
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .upload-area p {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+
+        /* Items list */
+        .items-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex: 1;
+            overflow-y: auto;
+            padding-bottom: 100px;
+        }
+
+        .item-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            display: flex;
+            gap: 14px;
+            animation: slideIn 0.2s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .item-card.processing {
+            opacity: 0.7;
+        }
+
+        .item-card.completed {
+            border-color: var(--success);
+        }
+
+        .item-card.error {
+            border-color: var(--error);
+        }
+
+        .item-thumbnail {
+            width: 80px;
+            height: 80px;
+            border-radius: 6px;
+            object-fit: cover;
+            background: var(--surface-2);
+            flex-shrink: 0;
+        }
+
+        .item-content {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .item-name {
+            font-size: 0.8125rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .item-status {
+            font-size: 0.6875rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: var(--surface-2);
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .item-status.ready { background: var(--border); color: var(--text-secondary); }
+        .item-status.processing { background: var(--border); color: var(--text); }
+        .item-status.completed { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .item-status.error { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+
+        .item-hook-input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            color: var(--text);
+            font-size: 0.8125rem;
+            font-family: inherit;
+            resize: none;
+            min-height: 52px;
+            line-height: 1.4;
+        }
+
+        .item-hook-input:focus {
+            outline: none;
+            border-color: var(--border-hover);
+        }
+
+        .item-hook-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .item-hook-input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .item-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: auto;
+        }
+
+        .item-btn {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .item-btn-download {
+            background: var(--text);
+            color: var(--bg);
+            border: none;
+        }
+
+        .item-btn-remove {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+
+        .item-btn-remove:hover {
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        /* Footer / Actions */
+        .footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, var(--bg) 20%);
+            padding: 20px 16px 24px;
+        }
+
+        .footer-content {
+            max-width: 720px;
+            margin: 0 auto;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-decoration: none;
+            flex: 1;
+        }
+
+        .btn-primary {
+            background: var(--text);
+            color: var(--bg);
+            border: none;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.25;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface);
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state p {
+            font-size: 0.875rem;
+        }
+
+        /* Progress bar */
+        .progress-bar {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--text);
+            transition: width 0.3s ease;
+        }
+
+        /* Count badge */
+        .count-badge {
+            background: var(--surface-2);
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            padding: 4px 10px;
             border-radius: 12px;
-            margin: 20px 0;
         }
+
         input[type="file"] { display: none; }
-        .section-title {
-            font-size: 1.1rem;
-            margin: 20px 0 10px;
-            color: #888;
-        }
+
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎬 TikTok Hook Video Generator</h1>
+    <div class="app">
+        <div class="header">
+            <div class="header-left">
+                <h1>Hook Video Generator</h1>
+                <p>Batch create TikTok-style videos</p>
+            </div>
+            <div class="header-right">
+                <span class="count-badge" id="countBadge">0 items</span>
+            </div>
+        </div>
 
         <div class="upload-area" id="uploadArea">
-            <p>📷 Drop image here or click to upload</p>
-            <p style="color: #666; font-size: 14px; margin-top: 10px;">PNG, JPG, GIF up to 16MB</p>
-            <input type="file" id="fileInput" accept="image/*">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            <h3>Upload images</h3>
+            <p>Drop multiple files or click to browse</p>
+            <input type="file" id="fileInput" accept="image/*" multiple>
         </div>
 
-        <img id="preview" alt="Preview">
-
-        <div class="hooks-container" id="hooksContainer">
-            <p class="section-title">✨ AI-Generated Hooks (click to select)</p>
-            <div id="hooksList"></div>
-
-            <p class="section-title">✏️ Or write your own</p>
-            <textarea class="custom-hook" id="customHook" placeholder="Write your custom hook text here..."></textarea>
-
-            <button class="btn" id="generateBtn" disabled>🎬 Generate Video</button>
+        <div class="items-list" id="itemsList">
+            <div class="empty-state" id="emptyState">
+                <p>No images uploaded yet</p>
+            </div>
         </div>
 
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p id="loadingText">Processing...</p>
-        </div>
-
-        <div class="result" id="result">
-            <h2>✅ Video Ready!</h2>
-            <video id="videoPreview" controls></video>
-            <br>
-            <a id="downloadLink" class="btn" download>📥 Download Video</a>
-            <button class="btn btn-secondary" onclick="location.reload()">🔄 Create Another</button>
+        <div class="footer">
+            <div class="footer-content">
+                <button class="btn btn-secondary" id="addMoreBtn">Add more</button>
+                <button class="btn btn-primary" id="generateAllBtn" disabled>Generate all videos</button>
+            </div>
         </div>
     </div>
 
     <script>
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
-        const preview = document.getElementById('preview');
-        const hooksContainer = document.getElementById('hooksContainer');
-        const hooksList = document.getElementById('hooksList');
-        const customHook = document.getElementById('customHook');
-        const generateBtn = document.getElementById('generateBtn');
-        const loading = document.getElementById('loading');
-        const loadingText = document.getElementById('loadingText');
-        const result = document.getElementById('result');
+        const itemsList = document.getElementById('itemsList');
+        const emptyState = document.getElementById('emptyState');
+        const generateAllBtn = document.getElementById('generateAllBtn');
+        const addMoreBtn = document.getElementById('addMoreBtn');
+        const countBadge = document.getElementById('countBadge');
 
-        let uploadedFile = null;
-        let selectedHook = '';
+        let items = [];
+        let itemIdCounter = 0;
 
-        // Drag and drop
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            handleFile(e.dataTransfer.files[0]);
-        });
-        uploadArea.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+        function updateUI() {
+            const pendingCount = items.filter(i => i.status === 'pending' || i.status === 'ready').length;
+            const totalCount = items.length;
 
-        async function handleFile(file) {
-            if (!file || !file.type.startsWith('image/')) return;
+            countBadge.textContent = `${totalCount} item${totalCount !== 1 ? 's' : ''}`;
+            emptyState.classList.toggle('hidden', totalCount > 0);
+            generateAllBtn.disabled = !items.some(i => i.status === 'ready' && i.hook.trim());
+        }
 
-            uploadedFile = file;
-            preview.src = URL.createObjectURL(file);
-            preview.style.display = 'block';
-            uploadArea.style.display = 'none';
+        function createItemCard(item) {
+            const card = document.createElement('div');
+            card.className = 'item-card';
+            card.id = `item-${item.id}`;
+            card.innerHTML = `
+                <img class="item-thumbnail" src="${item.previewUrl}" alt="Preview">
+                <div class="item-content">
+                    <div class="item-header">
+                        <span class="item-name">${item.file.name}</span>
+                        <span class="item-status ready" id="status-${item.id}">Ready</span>
+                    </div>
+                    <textarea
+                        class="item-hook-input"
+                        id="hook-${item.id}"
+                        placeholder="Enter hook text for this image..."
+                        rows="2"
+                    >${item.hook}</textarea>
+                    <div class="item-actions" id="actions-${item.id}">
+                        <button class="item-btn item-btn-remove" onclick="removeItem(${item.id})">Remove</button>
+                    </div>
+                </div>
+            `;
+            return card;
+        }
 
-            // Generate hooks
-            loading.style.display = 'block';
-            loadingText.textContent = 'Analyzing image & generating hooks...';
+        function addItem(file) {
+            const id = itemIdCounter++;
+            const item = {
+                id,
+                file,
+                previewUrl: URL.createObjectURL(file),
+                hook: '',
+                status: 'ready',
+                videoUrl: null
+            };
+            items.push(item);
 
-            const formData = new FormData();
-            formData.append('image', file);
+            const card = createItemCard(item);
+            itemsList.insertBefore(card, emptyState);
 
-            try {
-                const response = await fetch('/generate-hooks', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
+            // Add hook input listener
+            const hookInput = document.getElementById(`hook-${id}`);
+            hookInput.addEventListener('input', (e) => {
+                item.hook = e.target.value;
+                updateUI();
+            });
 
-                hooksList.innerHTML = '';
-                data.hooks.forEach(hook => {
-                    const div = document.createElement('div');
-                    div.className = 'hook-option';
-                    div.textContent = hook;
-                    div.onclick = () => selectHook(div, hook);
-                    hooksList.appendChild(div);
-                });
+            updateUI();
+        }
 
-                loading.style.display = 'none';
-                hooksContainer.style.display = 'block';
-            } catch (err) {
-                console.error(err);
-                loading.style.display = 'none';
-                hooksContainer.style.display = 'block';
+        function removeItem(id) {
+            const index = items.findIndex(i => i.id === id);
+            if (index > -1) {
+                URL.revokeObjectURL(items[index].previewUrl);
+                if (items[index].videoUrl) URL.revokeObjectURL(items[index].videoUrl);
+                items.splice(index, 1);
+            }
+            const card = document.getElementById(`item-${id}`);
+            if (card) card.remove();
+            updateUI();
+        }
+
+        function updateItemStatus(id, status, videoUrl = null) {
+            const item = items.find(i => i.id === id);
+            if (!item) return;
+
+            item.status = status;
+            if (videoUrl) item.videoUrl = videoUrl;
+
+            const statusEl = document.getElementById(`status-${id}`);
+            const actionsEl = document.getElementById(`actions-${id}`);
+            const hookInput = document.getElementById(`hook-${id}`);
+            const card = document.getElementById(`item-${id}`);
+
+            statusEl.className = `item-status ${status}`;
+            card.className = `item-card ${status}`;
+
+            if (status === 'processing') {
+                statusEl.textContent = 'Processing...';
+                hookInput.disabled = true;
+                actionsEl.innerHTML = '';
+            } else if (status === 'completed') {
+                statusEl.textContent = 'Completed';
+                hookInput.disabled = true;
+                actionsEl.innerHTML = `
+                    <a class="item-btn item-btn-download" href="${videoUrl}" download="hook_${id}.mp4">Download</a>
+                    <button class="item-btn item-btn-remove" onclick="removeItem(${id})">Remove</button>
+                `;
+            } else if (status === 'error') {
+                statusEl.textContent = 'Error';
+                hookInput.disabled = false;
+                actionsEl.innerHTML = `
+                    <button class="item-btn item-btn-remove" onclick="removeItem(${id})">Remove</button>
+                `;
             }
         }
 
-        function selectHook(element, hook) {
-            document.querySelectorAll('.hook-option').forEach(el => el.classList.remove('selected'));
-            element.classList.add('selected');
-            selectedHook = hook;
-            customHook.value = '';
-            generateBtn.disabled = false;
-        }
-
-        customHook.addEventListener('input', () => {
-            if (customHook.value.trim()) {
-                document.querySelectorAll('.hook-option').forEach(el => el.classList.remove('selected'));
-                selectedHook = customHook.value.trim();
-                generateBtn.disabled = false;
-            } else if (!document.querySelector('.hook-option.selected')) {
-                generateBtn.disabled = true;
-            }
-        });
-
-        generateBtn.addEventListener('click', async () => {
-            const hookText = customHook.value.trim() || selectedHook;
-            if (!uploadedFile || !hookText) return;
-
-            hooksContainer.style.display = 'none';
-            loading.style.display = 'block';
-            loadingText.textContent = 'Creating your video...';
+        async function processItem(item) {
+            updateItemStatus(item.id, 'processing');
 
             const formData = new FormData();
-            formData.append('image', uploadedFile);
-            formData.append('hook', hookText);
+            formData.append('image', item.file);
+            formData.append('hook', item.hook);
 
             try {
                 const response = await fetch('/create-video', {
@@ -489,24 +757,60 @@ HTML_TEMPLATE = """
                     body: formData
                 });
 
-                if (!response.ok) throw new Error('Video creation failed');
+                if (!response.ok) throw new Error('Failed');
 
                 const blob = await response.blob();
                 const url = URL.createObjectURL(blob);
-
-                document.getElementById('videoPreview').src = url;
-                document.getElementById('downloadLink').href = url;
-                document.getElementById('downloadLink').download = 'tiktok_hook.mp4';
-
-                loading.style.display = 'none';
-                result.style.display = 'block';
+                updateItemStatus(item.id, 'completed', url);
             } catch (err) {
                 console.error(err);
-                alert('Error creating video. Please try again.');
-                loading.style.display = 'none';
-                hooksContainer.style.display = 'block';
+                updateItemStatus(item.id, 'error');
             }
+        }
+
+        async function generateAll() {
+            const readyItems = items.filter(i => i.status === 'ready' && i.hook.trim());
+            generateAllBtn.disabled = true;
+            generateAllBtn.textContent = `Processing 0/${readyItems.length}...`;
+
+            for (let i = 0; i < readyItems.length; i++) {
+                generateAllBtn.textContent = `Processing ${i + 1}/${readyItems.length}...`;
+                await processItem(readyItems[i]);
+            }
+
+            generateAllBtn.textContent = 'Generate all videos';
+            updateUI();
+        }
+
+        // Event listeners
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
         });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+            files.forEach(addItem);
+        });
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+        addMoreBtn.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
+            files.forEach(addItem);
+            fileInput.value = '';
+        });
+
+        generateAllBtn.addEventListener('click', generateAll);
+
+        updateUI();
     </script>
 </body>
 </html>
@@ -571,9 +875,15 @@ def create_video_endpoint():
     video_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
 
     try:
+        print(f"Creating video: {image_path} -> {video_path}")
+        print(f"Hook: {hook_text}")
         create_video(image_path, hook_text, video_path)
+        print(f"Video created successfully: {video_path}")
         return send_file(video_path, mimetype='video/mp4', as_attachment=True, download_name='tiktok_hook.mp4')
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error creating video: {e}")
         return jsonify({'error': str(e)}), 500
     finally:
         # Cleanup image
@@ -582,11 +892,15 @@ def create_video_endpoint():
 
 
 if __name__ == '__main__':
+    port = int(os.getenv("PORT", 8080))
+    debug = os.getenv("FLASK_ENV", "development") == "development"
+
     print("\n" + "=" * 50)
     print("TikTok Hook Video Generator")
     print("=" * 50)
-    print(f"\nOpenRouter API: {'✓ Configured' if OPENROUTER_API_KEY else '✗ Not set (using fallback hooks)'}")
-    print("\nStarting server at http://localhost:5000")
+    print(f"\nOpenRouter API: {'Configured' if OPENROUTER_API_KEY else 'Not set (using fallback hooks)'}")
+    print(f"Font: {TIKTOK_FONT_BOLD or 'Default'}")
+    print(f"\nStarting server at http://0.0.0.0:{port}")
     print("=" * 50 + "\n")
 
-    app.run(debug=True, port=5000)
+    app.run(debug=debug, host='0.0.0.0', port=port)

@@ -284,39 +284,53 @@ def rephrase_comment_as_hook(comment_text, post_title):
 Post title: {post_title}
 Comment: {comment_text}
 
-Choose ONE of these frameworks that best fits the content:
+=== COPYWRITING FRAMEWORKS (Choose ONE) ===
 
-1. **PAS (Problem, Agitate, Solution)** - Start with a relatable problem, make it feel urgent, offer hope
-   Example: "Tired of [problem]? → It's affecting your [life area] → Here's how to fix it"
+1. **AIDA (Attention, Interest, Desire, Action)**
+   厭倦了輾轉反側？→ 想像醒來神清氣爽 → 體驗深層恢復睡眠 → 立即行動
 
-2. **AIDA (Attention, Interest, Desire, Action)** - Grab attention, build interest, create desire
-   Example: "Sick of [problem]? → Imagine [better state] → Experience [benefit] → Start now"
+2. **PAS (Problem, Agitate, Solution)**
+   厭倦了不斷疲憊？→ 缺乏睡眠影響健康 → 我們的解決方案帶來寧靜
 
-3. **BAB (Before, After, Bridge)** - Show transformation
-   Example: "[Bad state before] → [Good state after] → [How to get there]"
+3. **PATO (Problem, Agitate, Solution, Outcome)**
+   問題擾亂生活 → 想像對健康的損害 → 解決方案帶來舒緩 → 醒來精神煥發
 
-4. **Fear/Pain Hook** - Address fears or pain points directly
-   Example: "Warning: Are you making this mistake?" or "Stop doing [common mistake]"
+4. **FAB (Features, Advantages, Benefits)**
+   先進技術 → 確保最佳舒適 → 獲得恢復活力的好眠
 
-5. **Social Proof Hook** - Use numbers or testimonials
-   Example: "Why [X] people swear by this" or "The method that changed everything"
+5. **BAB (Before, After, Bridge)**
+   徹夜難眠 → 寧靜夜晚精力充沛 → 透過經過驗證的方法
 
-6. **How-To Hook** - Promise a solution
-   Example: "How to [achieve result] without [common obstacle]"
+6. **Four Ps (Promise, Picture, Proof, Push)**
+   承諾改善 → 想像充滿活力 → 有科學支持 → 準備好改變？
 
-7. **Bizarre/Curiosity Hook** - Create intrigue
-   Example: "Why [unexpected thing] is actually [surprising insight]"
+=== HOOK TYPES ===
 
-RULES:
-- Hook must be MAX 50 characters (this is critical!)
-- Use emotional triggers that resonate with ADHD community
-- Call out the audience directly (e.g., "ADHD brain?", "Fellow ADHDers")
-- Make it feel like a friend talking, not an ad
-- Focus on BENEFITS not features
-- Use relatable language (casual, authentic)
-- Remove all Reddit-specific references
+1. **How-To Hook**: 如何在夏天前減掉10磅
+2. **List Hook**: 提升開啟率32%的七個秘密
+3. **Fear Hook**: 警告！您是否正在破壞您的肌膚？
+4. **Mistakes Hook**: 常犯的七個錯誤
+5. **Bizarre Hook**: 為什麼Kim K停止使用護膚品
+6. **Social Proof Hook**: 549名男性兩個月練出腹肌的方法
+7. **Testimonial Hook**: 使用真實評價
 
-Return ONLY the hook text (max 50 chars), nothing else."""
+=== CRITICAL RULES ===
+
+- **HOOK: MAX 50 CHARACTERS** (這是關鍵！)
+- 必須清晰呼喚目標受眾 (ADHD community)
+- 強調BENEFITS不是Features
+- 使用情感觸發點
+- 像朋友說話，不是廣告
+- 使用比較讓價值更明顯
+- 使用原始數據 (78%比80%更可信)
+- 移除所有Reddit相關內容
+
+=== TOP FUNNEL FOCUS ===
+- 呼喚受眾 + 強調USP
+- 體現品牌聲音（輕鬆俏皮）
+- 傳達「不能錯過」的感覺
+
+Return ONLY the hook text (max 50 chars), nothing else. No quotes, no explanation."""
 
     try:
         print(f"Calling OpenRouter API to rephrase: {comment_text[:50]}...")

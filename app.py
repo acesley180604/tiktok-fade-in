@@ -7,6 +7,7 @@ Upload an image, generate hooks with AI (OpenRouter), and create TikTok-style vi
 import os
 import uuid
 import tempfile
+import time
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, render_template_string
 from werkzeug.utils import secure_filename
@@ -21,6 +22,10 @@ app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
 
 # OpenRouter Configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+
+# Apify Configuration (for Reddit scraping)
+APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN", "")
+APIFY_REDDIT_ACTOR = "trudax~reddit-scraper-lite"  # Free/cheap Reddit scraper
 
 # TikTok Sans font - try multiple paths for local and production
 FONT_PATHS = [
@@ -160,6 +165,182 @@ def describe_image_with_llm(image_path):
     except Exception as e:
         print(f"Vision Error: {e}")
         return "an interesting meme or image"
+
+
+def fetch_reddit_posts(subreddit_name="adhdmeme", sort="hot", limit=10):
+    """Fetch image posts from a subreddit using Apify"""
+    if not APIFY_API_TOKEN:
+        return {"error": "Apify API not configured. Set APIFY_API_TOKEN in .env"}
+
+    try:
+        # Use synchronous API call that waits for completion
+        run_url = f"https://api.apify.com/v2/acts/{APIFY_REDDIT_ACTOR}/runs?waitForFinish=120"
+
+        # Map sort to Apify input format
+        sort_mapping = {"hot": "hot", "top": "top", "new": "new"}
+        apify_sort = sort_mapping.get(sort, "hot")
+
+        payload = {
+            "startUrls": [{"url": f"https://www.reddit.com/r/{subreddit_name}/{apify_sort}/"}],
+            "maxItems": limit * 3  # Get extra to filter for images
+        }
+
+        headers = {
+            "Authorization": f"Bearer {APIFY_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+
+        # Start the run and wait
+        print(f"Starting Apify run for r/{subreddit_name}/{apify_sort}...")
+        response = requests.post(run_url, json=payload, headers=headers, timeout=180)
+        response.raise_for_status()
+        run_data = response.json()
+
+        status = run_data["data"]["status"]
+        if status != "SUCCEEDED":
+            return {"error": f"Apify run failed with status: {status}"}
+
+        # Get results from dataset
+        dataset_id = run_data["data"]["defaultDatasetId"]
+        dataset_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
+
+        dataset_response = requests.get(dataset_url, headers=headers, timeout=30)
+        dataset_response.raise_for_status()
+        items = dataset_response.json()
+
+        # Separate posts and comments
+        posts = {}
+        comments_by_post = {}
+
+        for item in items:
+            data_type = item.get("dataType", "")
+
+            if data_type == "post":
+                post_id = item.get("id", "")
+                # Check if it has images
+                image_urls = item.get("imageUrls", [])
+                link = item.get("link", "")
+
+                # Try to get image URL
+                image_url = None
+                if image_urls:
+                    image_url = image_urls[0]
+                elif link and ("i.redd.it" in link or link.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))):
+                    image_url = link
+
+                if image_url:
+                    posts[post_id] = {
+                        "id": item.get("parsedId", post_id),
+                        "title": item.get("title", ""),
+                        "image_url": image_url,
+                        "score": item.get("upVotes", 0),
+                        "permalink": item.get("url", f"https://reddit.com/r/{subreddit_name}"),
+                        "top_comments": []
+                    }
+                    comments_by_post[post_id] = []
+
+            elif data_type == "comment":
+                post_id = item.get("postId", "")
+                if post_id not in comments_by_post:
+                    comments_by_post[post_id] = []
+
+                body = item.get("body", "")
+                if body and 10 < len(body) < 300:
+                    comments_by_post[post_id].append({
+                        "text": body,
+                        "score": item.get("upVotes", 0)
+                    })
+
+        # Match comments to posts
+        for post_id, post in posts.items():
+            if post_id in comments_by_post:
+                # Sort by score and take top 3
+                sorted_comments = sorted(comments_by_post[post_id], key=lambda x: x["score"], reverse=True)
+                post["top_comments"] = sorted_comments[:3]
+
+        # Convert to list and limit
+        results = list(posts.values())[:limit]
+
+        print(f"Found {len(results)} image posts with comments")
+        return {"posts": results}
+
+    except requests.exceptions.RequestException as e:
+        print(f"Apify API error: {e}")
+        return {"error": f"Apify API error: {str(e)}"}
+    except Exception as e:
+        print(f"Error fetching posts: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": f"Error fetching posts: {str(e)}"}
+
+
+def rephrase_comment_as_hook(comment_text, post_title):
+    """Use LLM to rephrase a Reddit comment into a TikTok hook"""
+    if not OPENROUTER_API_KEY:
+        return comment_text
+
+    prompt = f"""Transform this Reddit comment into a viral TikTok hook text.
+
+Post title: {post_title}
+Comment: {comment_text}
+
+Requirements:
+- Make it 1-2 sentences max
+- Start with "When...", "POV:", "That moment when...", or similar engaging opener
+- Keep the relatability and humor of the original
+- Make it feel personal and authentic
+- Remove any Reddit-specific references
+
+Return ONLY the hook text, nothing else."""
+
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "meta-llama/llama-3.1-8b-instruct:free",
+                "messages": [{"role": "user", "content": prompt}]
+            },
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Rephrase Error: {e}")
+        return comment_text
+
+
+def download_reddit_image(image_url):
+    """Download image from URL and save to temp folder"""
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(image_url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        # Determine extension
+        content_type = response.headers.get('content-type', '')
+        if 'png' in content_type:
+            ext = 'png'
+        elif 'gif' in content_type:
+            ext = 'gif'
+        elif 'webp' in content_type:
+            ext = 'webp'
+        else:
+            ext = 'jpg'
+
+        filename = f"{uuid.uuid4()}.{ext}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+        with open(filepath, 'wb') as f:
+            f.write(response.content)
+
+        return filepath
+    except Exception as e:
+        print(f"Download Error: {e}")
+        return None
 
 
 def build_frame(frame_idx, image, hook_text, fps=24):
@@ -589,6 +770,199 @@ HTML_TEMPLATE = """
         input[type="file"] { display: none; }
 
         .hidden { display: none !important; }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--surface);
+            padding: 4px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px 16px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .tab:hover {
+            color: var(--text-secondary);
+        }
+
+        .tab.active {
+            background: var(--surface-2);
+            color: var(--text);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Reddit posts */
+        .reddit-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .reddit-controls select {
+            flex: 1;
+            padding: 10px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.875rem;
+        }
+
+        .reddit-post {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 12px;
+            animation: slideIn 0.2s ease;
+        }
+
+        .reddit-post-header {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .reddit-post-image {
+            width: 120px;
+            height: 120px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: var(--surface-2);
+            cursor: pointer;
+        }
+
+        .reddit-post-info {
+            flex: 1;
+        }
+
+        .reddit-post-title {
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin-bottom: 6px;
+            line-height: 1.4;
+        }
+
+        .reddit-post-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .reddit-post-link {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+
+        .reddit-post-link:hover {
+            text-decoration: underline;
+        }
+
+        .reddit-comments {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .reddit-comments-title {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .reddit-comment {
+            background: var(--bg);
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            border: 1px solid transparent;
+        }
+
+        .reddit-comment:hover {
+            border-color: var(--border-hover);
+        }
+
+        .reddit-comment.selected {
+            border-color: var(--text);
+        }
+
+        .reddit-comment-text {
+            font-size: 0.8125rem;
+            line-height: 1.4;
+            margin-bottom: 4px;
+        }
+
+        .reddit-comment-score {
+            font-size: 0.6875rem;
+            color: var(--text-muted);
+        }
+
+        .reddit-post-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .reddit-hook-input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            color: var(--text);
+            font-size: 0.8125rem;
+            font-family: inherit;
+            resize: none;
+            min-height: 60px;
+            margin-top: 12px;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border);
+            border-top-color: var(--text);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .reddit-loading, .reddit-error {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+        }
+
+        .reddit-error {
+            color: var(--error);
+        }
     </style>
 </head>
 <body>
@@ -596,14 +970,21 @@ HTML_TEMPLATE = """
         <div class="header">
             <div class="header-left">
                 <h1>Hook Video Generator</h1>
-                <p>Batch create TikTok-style videos</p>
+                <p>Create TikTok-style videos</p>
             </div>
             <div class="header-right">
                 <span class="count-badge" id="countBadge">0 items</span>
             </div>
         </div>
 
-        <div class="upload-area" id="uploadArea">
+        <div class="tabs">
+            <button class="tab active" data-tab="upload">Upload</button>
+            <button class="tab" data-tab="reddit">Reddit</button>
+        </div>
+
+        <!-- Upload Tab -->
+        <div class="tab-content active" id="uploadTab">
+            <div class="upload-area" id="uploadArea">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
@@ -618,10 +999,29 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <div class="footer">
+        <div class="footer" id="uploadFooter">
             <div class="footer-content">
                 <button class="btn btn-secondary" id="addMoreBtn">Add more</button>
                 <button class="btn btn-primary" id="generateAllBtn" disabled>Generate all videos</button>
+            </div>
+        </div>
+        </div>
+
+        <!-- Reddit Tab -->
+        <div class="tab-content" id="redditTab">
+            <div class="reddit-controls">
+                <select id="redditSort">
+                    <option value="hot">Hot</option>
+                    <option value="top">Top (Week)</option>
+                    <option value="new">New</option>
+                </select>
+                <button class="btn btn-secondary" id="refreshReddit">Refresh</button>
+            </div>
+            <div id="redditPosts">
+                <div class="reddit-loading">
+                    <div class="loading-spinner"></div>
+                    <p style="margin-top: 12px;">Loading posts from r/adhdmeme...</p>
+                </div>
             </div>
         </div>
     </div>
@@ -811,6 +1211,213 @@ HTML_TEMPLATE = """
         generateAllBtn.addEventListener('click', generateAll);
 
         updateUI();
+
+        // ============ Tab Switching ============
+        const tabs = document.querySelectorAll('.tab');
+        const tabContents = document.querySelectorAll('.tab-content');
+        const uploadFooter = document.getElementById('uploadFooter');
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const targetTab = tab.dataset.tab;
+
+                tabs.forEach(t => t.classList.remove('active'));
+                tabContents.forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+
+                if (targetTab === 'upload') {
+                    document.getElementById('uploadTab').classList.add('active');
+                    uploadFooter.style.display = 'block';
+                } else if (targetTab === 'reddit') {
+                    document.getElementById('redditTab').classList.add('active');
+                    uploadFooter.style.display = 'none';
+                    loadRedditPosts();
+                }
+            });
+        });
+
+        // ============ Reddit Functions ============
+        const redditPosts = document.getElementById('redditPosts');
+        const redditSort = document.getElementById('redditSort');
+        const refreshReddit = document.getElementById('refreshReddit');
+        let redditLoaded = false;
+
+        async function loadRedditPosts() {
+            if (redditLoaded) return;
+
+            const sort = redditSort.value;
+            redditPosts.innerHTML = `
+                <div class="reddit-loading">
+                    <div class="loading-spinner"></div>
+                    <p style="margin-top: 12px;">Loading posts from r/adhdmeme...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(`/reddit/posts?sort=${sort}&limit=10`);
+                const data = await response.json();
+
+                if (data.error) {
+                    redditPosts.innerHTML = `<div class="reddit-error">${data.error}</div>`;
+                    return;
+                }
+
+                if (!data.posts || data.posts.length === 0) {
+                    redditPosts.innerHTML = `<div class="reddit-error">No posts found</div>`;
+                    return;
+                }
+
+                redditPosts.innerHTML = '';
+                data.posts.forEach(post => {
+                    const postEl = createRedditPostElement(post);
+                    redditPosts.appendChild(postEl);
+                });
+
+                redditLoaded = true;
+            } catch (err) {
+                console.error(err);
+                redditPosts.innerHTML = `<div class="reddit-error">Failed to load posts. Check Reddit API credentials.</div>`;
+            }
+        }
+
+        function createRedditPostElement(post) {
+            const div = document.createElement('div');
+            div.className = 'reddit-post';
+            div.dataset.postId = post.id;
+
+            const commentsHtml = post.top_comments.map((c, idx) => `
+                <div class="reddit-comment" data-comment-idx="${idx}" data-comment-text="${escapeHtml(c.text)}" data-post-title="${escapeHtml(post.title)}">
+                    <div class="reddit-comment-text">${escapeHtml(c.text)}</div>
+                    <div class="reddit-comment-score">${c.score} points</div>
+                </div>
+            `).join('');
+
+            div.innerHTML = `
+                <div class="reddit-post-header">
+                    <img class="reddit-post-image" src="${post.image_url}" alt="Post image" onerror="this.style.display='none'">
+                    <div class="reddit-post-info">
+                        <div class="reddit-post-title">${escapeHtml(post.title)}</div>
+                        <div class="reddit-post-meta">${post.score} upvotes</div>
+                        <a class="reddit-post-link" href="${post.permalink}" target="_blank">View on Reddit</a>
+                    </div>
+                </div>
+                ${post.top_comments.length > 0 ? `
+                    <div class="reddit-comments">
+                        <div class="reddit-comments-title">Top comments (click to use as hook)</div>
+                        ${commentsHtml}
+                    </div>
+                ` : ''}
+                <textarea class="reddit-hook-input" placeholder="Enter hook text or click a comment above..." data-post-id="${post.id}"></textarea>
+                <div class="reddit-post-actions">
+                    <button class="btn btn-secondary rephrase-btn" data-post-id="${post.id}">Rephrase with AI</button>
+                    <button class="btn btn-primary generate-btn" data-post-id="${post.id}" data-image-url="${post.image_url}">Generate Video</button>
+                </div>
+            `;
+
+            // Comment click handlers
+            div.querySelectorAll('.reddit-comment').forEach(commentEl => {
+                commentEl.addEventListener('click', () => {
+                    div.querySelectorAll('.reddit-comment').forEach(c => c.classList.remove('selected'));
+                    commentEl.classList.add('selected');
+                    const hookInput = div.querySelector('.reddit-hook-input');
+                    hookInput.value = commentEl.dataset.commentText;
+                });
+            });
+
+            // Rephrase button
+            div.querySelector('.rephrase-btn').addEventListener('click', async () => {
+                const hookInput = div.querySelector('.reddit-hook-input');
+                const comment = hookInput.value;
+                if (!comment) return;
+
+                const btn = div.querySelector('.rephrase-btn');
+                btn.disabled = true;
+                btn.textContent = 'Rephrasing...';
+
+                try {
+                    const response = await fetch('/reddit/rephrase', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ comment, title: post.title })
+                    });
+                    const data = await response.json();
+                    if (data.hook) {
+                        hookInput.value = data.hook;
+                    }
+                } catch (err) {
+                    console.error(err);
+                }
+
+                btn.disabled = false;
+                btn.textContent = 'Rephrase with AI';
+            });
+
+            // Generate video button
+            div.querySelector('.generate-btn').addEventListener('click', async () => {
+                const hookInput = div.querySelector('.reddit-hook-input');
+                const hook = hookInput.value;
+                if (!hook) {
+                    alert('Please enter or select a hook text first');
+                    return;
+                }
+
+                const btn = div.querySelector('.generate-btn');
+                const imageUrl = btn.dataset.imageUrl;
+
+                btn.disabled = true;
+                btn.textContent = 'Generating...';
+
+                try {
+                    const response = await fetch('/reddit/create-video', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ image_url: imageUrl, hook })
+                    });
+
+                    if (!response.ok) throw new Error('Failed to generate video');
+
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+
+                    // Create download link
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `hook_${post.id}.mp4`;
+                    a.click();
+
+                    btn.textContent = 'Downloaded!';
+                    setTimeout(() => {
+                        btn.textContent = 'Generate Video';
+                        btn.disabled = false;
+                    }, 2000);
+                } catch (err) {
+                    console.error(err);
+                    btn.textContent = 'Error';
+                    setTimeout(() => {
+                        btn.textContent = 'Generate Video';
+                        btn.disabled = false;
+                    }, 2000);
+                }
+            });
+
+            return div;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        refreshReddit.addEventListener('click', () => {
+            redditLoaded = false;
+            loadRedditPosts();
+        });
+
+        redditSort.addEventListener('change', () => {
+            redditLoaded = false;
+            loadRedditPosts();
+        });
     </script>
 </body>
 </html>
@@ -891,6 +1498,76 @@ def create_video_endpoint():
             os.remove(image_path)
 
 
+@app.route('/reddit/posts', methods=['GET'])
+def get_reddit_posts():
+    """Fetch posts from r/adhdmeme"""
+    subreddit = request.args.get('subreddit', 'adhdmeme')
+    sort = request.args.get('sort', 'hot')
+    limit = min(int(request.args.get('limit', 10)), 25)
+
+    result = fetch_reddit_posts(subreddit, sort, limit)
+    return jsonify(result)
+
+
+@app.route('/reddit/rephrase', methods=['POST'])
+def rephrase_hook():
+    """Rephrase a Reddit comment into a TikTok hook"""
+    data = request.get_json()
+    comment = data.get('comment', '')
+    title = data.get('title', '')
+
+    if not comment:
+        return jsonify({'error': 'No comment provided'}), 400
+
+    hook = rephrase_comment_as_hook(comment, title)
+    return jsonify({'hook': hook})
+
+
+@app.route('/reddit/create-video', methods=['POST'])
+def create_video_from_reddit():
+    """Download Reddit image and create video"""
+    data = request.get_json()
+    image_url = data.get('image_url', '')
+    hook_text = data.get('hook', 'Your hook text here...')
+
+    if not image_url:
+        return jsonify({'error': 'No image URL provided'}), 400
+
+    # Download image
+    image_path = download_reddit_image(image_url)
+    if not image_path:
+        return jsonify({'error': 'Failed to download image'}), 500
+
+    # Create video
+    video_filename = f"{uuid.uuid4()}.mp4"
+    video_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
+
+    try:
+        print(f"Creating video from Reddit: {image_url} -> {video_path}")
+        print(f"Hook: {hook_text}")
+        create_video(image_path, hook_text, video_path)
+        print(f"Video created successfully: {video_path}")
+        return send_file(video_path, mimetype='video/mp4', as_attachment=True, download_name='tiktok_hook.mp4')
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error creating video: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        # Cleanup
+        if os.path.exists(image_path):
+            os.remove(image_path)
+
+
+@app.route('/reddit/status', methods=['GET'])
+def reddit_status():
+    """Check if Apify API is configured for Reddit scraping"""
+    return jsonify({
+        'configured': bool(APIFY_API_TOKEN),
+        'has_openrouter': bool(OPENROUTER_API_KEY)
+    })
+
+
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 8080))
     debug = os.getenv("FLASK_ENV", "development") == "development"
@@ -899,6 +1576,7 @@ if __name__ == '__main__':
     print("TikTok Hook Video Generator")
     print("=" * 50)
     print(f"\nOpenRouter API: {'Configured' if OPENROUTER_API_KEY else 'Not set (using fallback hooks)'}")
+    print(f"Apify API: {'Configured' if APIFY_API_TOKEN else 'Not set (Reddit tab disabled)'}")
     print(f"Font: {TIKTOK_FONT_BOLD or 'Default'}")
     print(f"\nStarting server at http://0.0.0.0:{port}")
     print("=" * 50 + "\n")

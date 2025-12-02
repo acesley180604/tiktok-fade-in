@@ -275,23 +275,48 @@ def fetch_reddit_posts(subreddit_name="adhdmeme", sort="hot", limit=10):
 
 
 def rephrase_comment_as_hook(comment_text, post_title):
-    """Use LLM to rephrase a Reddit comment into a TikTok hook"""
+    """Use LLM to rephrase a Reddit comment into a TikTok hook using copywriting frameworks"""
     if not OPENROUTER_API_KEY:
         return comment_text
 
-    prompt = f"""Transform this Reddit comment into a viral TikTok hook text.
+    prompt = f"""Transform this Reddit comment into a viral TikTok hook using proven copywriting frameworks.
 
 Post title: {post_title}
 Comment: {comment_text}
 
-Requirements:
-- Make it 1-2 sentences max
-- Start with "When...", "POV:", "That moment when...", or similar engaging opener
-- Keep the relatability and humor of the original
-- Make it feel personal and authentic
-- Remove any Reddit-specific references
+Choose ONE of these frameworks that best fits the content:
 
-Return ONLY the hook text, nothing else."""
+1. **PAS (Problem, Agitate, Solution)** - Start with a relatable problem, make it feel urgent, offer hope
+   Example: "Tired of [problem]? → It's affecting your [life area] → Here's how to fix it"
+
+2. **AIDA (Attention, Interest, Desire, Action)** - Grab attention, build interest, create desire
+   Example: "Sick of [problem]? → Imagine [better state] → Experience [benefit] → Start now"
+
+3. **BAB (Before, After, Bridge)** - Show transformation
+   Example: "[Bad state before] → [Good state after] → [How to get there]"
+
+4. **Fear/Pain Hook** - Address fears or pain points directly
+   Example: "Warning: Are you making this mistake?" or "Stop doing [common mistake]"
+
+5. **Social Proof Hook** - Use numbers or testimonials
+   Example: "Why [X] people swear by this" or "The method that changed everything"
+
+6. **How-To Hook** - Promise a solution
+   Example: "How to [achieve result] without [common obstacle]"
+
+7. **Bizarre/Curiosity Hook** - Create intrigue
+   Example: "Why [unexpected thing] is actually [surprising insight]"
+
+RULES:
+- Hook must be MAX 50 characters (this is critical!)
+- Use emotional triggers that resonate with ADHD community
+- Call out the audience directly (e.g., "ADHD brain?", "Fellow ADHDers")
+- Make it feel like a friend talking, not an ad
+- Focus on BENEFITS not features
+- Use relatable language (casual, authentic)
+- Remove all Reddit-specific references
+
+Return ONLY the hook text (max 50 chars), nothing else."""
 
     try:
         response = requests.post(
